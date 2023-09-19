@@ -1,4 +1,4 @@
-name = "st-jude-head-to-head-api"
+name = "relay-st-jude-co-founder-champion-scoreboard"
 main = "src/index.ts"
 compatibility_date = "2023-09-14"
 
@@ -10,9 +10,9 @@ compatibility_date = "2023-09-14"
 
 # Bind a KV Namespace. Use KV as persistent storage for small key-value pairs.
 # Docs: https://developers.cloudflare.com/workers/runtime-apis/kv
-# [[kv_namespaces]]
-# binding = "MY_KV_NAMESPACE"
-# id = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+[[kv_namespaces]]
+binding = "RELAY_FOR_ST_JUDE"
+id = "470ca90f43294c0aa5bf6c789ded6095"
 
 # Bind an R2 Bucket. Use R2 to store arbitrarily large blobs of data, such as files.
 # Docs: https://developers.cloudflare.com/r2/api/workers/workers-api-usage/
@@ -49,3 +49,11 @@ compatibility_date = "2023-09-14"
 # [[migrations]]
 # tag = "v1"
 # new_classes = ["MyDurableObject"]
+
+[[routes]]
+pattern = "stjude-scoreboard.snailedit.org"
+custom_domain = true
+
+[[routes]]
+pattern = "stjude-scoreboard.snailedit.online"
+custom_domain = true
