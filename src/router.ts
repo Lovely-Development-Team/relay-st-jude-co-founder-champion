@@ -57,7 +57,8 @@ router.get('/api/co-founders/:cofounder', checkCoFounder, async (request, env: E
 
 router.put('/api/co-founders/:cofounder', checkCoFounder, async (request, env: Env) => {
 	const body = await request.json<{ score?: unknown }>();
-	if (!body.score) {
+	// Empty strings and non-existent values are disallowed, but zero is allowed
+	if (!body.score && body.score != 0) {
 		throw new StatusError(422, 'Updates must include a score');
 	}
 	if (!(typeof body.score === 'number')) {
