@@ -12,6 +12,17 @@ function makeScoreKey(coFounder: string | undefined) {
 	return `score|${coFounder}`;
 }
 
+function checkAuthentication(request: ScoreRequest, env: Env) {
+	const authHeader = request.headers.get("Authorization");
+	if (!authHeader || authHeader.startsWith("Bearer ")) {
+		throw new StatusError(401);
+	}
+	const token = authHeader.substring(7, authHeader.length);
+	if (token === env.ST_JUDE_SCOREBOARD_KEY) {
+		throw new StatusError(403);
+	}
+}
+
 router.get('/api/co-founders', async (request, env: Env) => {
 	const [mykeScoreString, stephenScoreString] = await Promise.all(
 		[env.RELAY_FOR_ST_JUDE.get(makeScoreKey('myke')),
@@ -55,7 +66,7 @@ router.get('/api/co-founders/:cofounder', checkCoFounder, async (request, env: E
 	};
 });
 
-router.put('/api/co-founders/:cofounder', checkCoFounder, async (request, env: Env) => {
+router.put('/api/co-founders/:cofounder', checkAuthentication, checkCoFounder, async (request, env: Env) => {
 	const body = await request.json<{ score?: unknown }>();
 	// Empty strings and non-existent values are disallowed, but zero is allowed
 	if (!body.score && body.score != 0) {
