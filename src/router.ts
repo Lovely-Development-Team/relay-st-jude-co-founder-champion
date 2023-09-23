@@ -18,7 +18,7 @@ function checkAuthentication(request: ScoreRequest, env: Env) {
 		throw new StatusError(401);
 	}
 	const token = authHeader.substring(7, authHeader.length);
-	if (token === env.ST_JUDE_SCOREBOARD_KEY) {
+	if (token !== env.ST_JUDE_SCOREBOARD_KEY) {
 		throw new StatusError(403);
 	}
 }
