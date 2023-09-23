@@ -13,8 +13,8 @@ function makeScoreKey(coFounder: string | undefined) {
 }
 
 function checkAuthentication(request: ScoreRequest, env: Env) {
-	const authHeader = request.headers.get("Authorization");
-	if (!authHeader || authHeader.startsWith("Bearer ")) {
+	const authHeader = request.headers.get("authorization");
+	if (!authHeader || !authHeader.startsWith("Bearer ")) {
 		throw new StatusError(401);
 	}
 	const token = authHeader.substring(7, authHeader.length);
