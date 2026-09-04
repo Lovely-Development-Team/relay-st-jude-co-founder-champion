@@ -1,6 +1,6 @@
 name = "relay-st-jude-co-founder-champion-scoreboard"
 main = "src/index.ts"
-compatibility_date = "2023-09-14"
+compatibility_date = "2026-06-16"
 
 # Variable bindings. These are arbitrary, plaintext strings (similar to environment variables)
 # Note: Use secrets to store sensitive data.
