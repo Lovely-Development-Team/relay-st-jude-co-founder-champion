@@ -1,14 +1,14 @@
 import { IRequestStrict, Router, status, StatusError } from 'itty-router';
 
 // Barring a dramatic upheaval, I think we're safe to hardcode this.
-const CO_FOUNDERS = ['myke', 'stephen'] as const;
+export const CO_FOUNDERS = ['myke', 'stephen'] as const;
 
 type ScoreRequest = Request & IRequestStrict & { coFounder?: typeof CO_FOUNDERS[number] }
 
 // now let's create a router (note the lack of "new")
 const router = Router<ScoreRequest, [Env]>();
 
-function makeScoreKey(coFounder: string | undefined) {
+export function makeScoreKey(coFounder: string | undefined) {
 	return `score|${coFounder}`;
 }
 
@@ -40,7 +40,7 @@ router.get('/api/co-founders', async (request, env: Env) => {
 	};
 });
 
-function isCoFounder(name: string): name is typeof CO_FOUNDERS[number] {
+export function isCoFounder(name: string): name is typeof CO_FOUNDERS[number] {
 	return CO_FOUNDERS.includes(name as typeof CO_FOUNDERS[number]);
 }
 

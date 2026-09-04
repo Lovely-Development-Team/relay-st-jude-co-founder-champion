@@ -10,6 +10,7 @@
 
 import apiRouter from './router';
 import { error, json } from 'itty-router';
+import { fetchStJudeScoreboard } from './scoreboard';
 
 // Export a default object containing event handlers
 export default {
@@ -32,5 +33,13 @@ export default {
       </ul>`,
 			{ headers: { 'Content-Type': 'text/html' } }
 		);
+	},
+
+	// The scheduled handler runs on the cron trigger configured in wrangler.toml
+	// and polls St Jude's scoreboard to keep KV in sync with the live totals
+	async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+		ctx.waitUntil(fetchStJudeScoreboard(env).catch((err) => {
+			console.error('St Jude scoreboard poll threw an error', err);
+		}));
 	}
 };
