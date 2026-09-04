@@ -17,6 +17,14 @@ id = "470ca90f43294c0aa5bf6c789ded6095"
 [secrets]
 required = [ "ST_JUDE_SCOREBOARD_KEY" ]
 
+# Bind a D1 database. Use D1 for relational storage.
+# Docs: https://developers.cloudflare.com/d1/
+[[d1_databases]]
+binding = "WIDGET_PUSH_TOKENS"
+database_name = "st-jude-widget-push-tokens"
+database_id = "2b13162a-0046-44e7-b23c-3958ce2c5b20"
+migrations_dir = "migrations"
+
 # Bind an R2 Bucket. Use R2 to store arbitrarily large blobs of data, such as files.
 # Docs: https://developers.cloudflare.com/r2/api/workers/workers-api-usage/
 # [[r2_buckets]]

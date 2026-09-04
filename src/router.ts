@@ -1,4 +1,5 @@
 import { IRequestStrict, Router, status, StatusError } from 'itty-router';
+import { z } from 'zod';
 
 // Barring a dramatic upheaval, I think we're safe to hardcode this.
 export const CO_FOUNDERS = ['myke', 'stephen'] as const;
@@ -76,6 +77,27 @@ router.put('/api/co-founders/:cofounder', checkAuthentication, checkCoFounder, a
 		throw new StatusError(422, 'Scores must be a number');
 	}
 	await env.RELAY_FOR_ST_JUDE.put(makeScoreKey(request.coFounder), String(body.score));
+	return status(204);
+});
+
+const PUSH_TOKEN_TYPES = ['widget', 'liveActivityStart', 'liveActivityUpdate'] as const;
+
+const updateTokenRequestSchema = z.object({
+	tokenType: z.enum(PUSH_TOKEN_TYPES),
+	scopeId: z.string(),
+	token: z.string().min(3),
+})
+
+router.put('/api/push-tokens/:deviceId', checkAuthentication, async (request, env: Env) => {
+	const deviceId = request.params['deviceId'];
+	const body = updateTokenRequestSchema.parse(await request.json());
+
+	await env.WIDGET_PUSH_TOKENS.prepare(
+		`INSERT INTO push_tokens (device_id, token_type, scope_id, token, updated_at)
+		 VALUES (?1, ?2, ?3, ?4, ?5)
+		 ON CONFLICT(device_id, token_type, scope_id) DO UPDATE SET token = excluded.token, updated_at = excluded.updated_at`
+	).bind(deviceId, body.tokenType, body.scopeId, body.token, new Date().toISOString()).run();
+
 	return status(204);
 });
 
