@@ -1,7 +1,7 @@
 import { importPKCS8, SignJWT } from 'jose';
 import { StatusError } from 'itty-router';
 import { cache } from 'cloudflare:workers';
-import { CO_FOUNDER_SCORES_CACHE_TAG, makeScoreKey } from './router';
+import { CO_FOUNDER_SCORES_CACHE_TAG, getScores } from './router';
 
 export type ApnsEnvironment = 'sandbox' | 'production';
 type ApnsPushType = 'background' | 'liveactivity';
@@ -180,9 +180,7 @@ export async function notifyScoreChange(
 	env: Env,
 	updatedScores: { myke: number; stephen: number } | undefined = undefined
 ): Promise<void> {
-	const scores = updatedScores ?? {
-		myke: Number.parseInt(await env.RELAY_FOR_ST_JUDE.get(makeScoreKey('myke')) ?? '0', 10),
-		stephen: Number.parseInt(await env.RELAY_FOR_ST_JUDE.get(makeScoreKey('stephen')) ?? '0', 10) };
+	const scores = updatedScores ?? await getScores(env);
 
 	const { results: rows } = await env.WIDGET_PUSH_TOKENS.prepare(
 		`SELECT device_id, token_type, scope_id, token, environment FROM push_tokens WHERE token_type = 'widget'`
@@ -257,15 +255,10 @@ export async function startLiveActivity(
 	environment: ApnsEnvironment,
 	attributes: unknown
 ): Promise<{ ok: true } | { ok: false; status: number; reason?: string }> {
-	const [mykeStored, stephenStored, channelId] = await Promise.all([
-		env.RELAY_FOR_ST_JUDE.get(makeScoreKey('myke')),
-		env.RELAY_FOR_ST_JUDE.get(makeScoreKey('stephen')),
+	const [scores, channelId] = await Promise.all([
+		getScores(env),
 		getOrCreateChannel(env, environment),
 	]);
-	const scores = {
-		myke: mykeStored !== null ? Number.parseFloat(mykeStored) : 0,
-		stephen: stephenStored !== null ? Number.parseFloat(stephenStored) : 0,
-	};
 
 	return sendApnsPush(
 		env,

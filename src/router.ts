@@ -17,15 +17,22 @@ export function makeScoreKey(coFounder: string | undefined) {
 	return `score|${coFounder}`;
 }
 
+export async function getScores(env: Env): Promise<{ myke: number; stephen: number }> {
+	const myKey = makeScoreKey('myke');
+	const stephenKey = makeScoreKey('stephen');
+	const scoreStrings = await env.RELAY_FOR_ST_JUDE.get([myKey, stephenKey]);
+	const mykeScoreString = scoreStrings.get(myKey);
+	const stephenScoreString = scoreStrings.get(stephenKey);
+	return {
+		myke: mykeScoreString != null ? Number.parseFloat(mykeScoreString) : 0,
+		stephen: stephenScoreString != null ? Number.parseFloat(stephenScoreString) : 0,
+	};
+}
+
 export const CO_FOUNDER_SCORES_CACHE_TAG = 'co-founder-scores';
 
 router.get('/api/co-founders', async (request, env: Env, ctx: ExecutionContext) => {
-	const [mykeScoreString, stephenScoreString] = await Promise.all(
-		[env.RELAY_FOR_ST_JUDE.get(makeScoreKey('myke')),
-			env.RELAY_FOR_ST_JUDE.get(makeScoreKey('stephen'))]
-	);
-	const mykeScore = mykeScoreString !== null ? Number.parseFloat(mykeScoreString) : 0;
-	const stephenScore = stephenScoreString !== null ? Number.parseFloat(stephenScoreString) : 0;
+	const { myke: mykeScore, stephen: stephenScore } = await getScores(env);
 	return new Response(JSON.stringify({
 		myke: { score: mykeScore },
 		stephen: { score: stephenScore },

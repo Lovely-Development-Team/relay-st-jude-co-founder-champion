@@ -22,14 +22,15 @@ export async function fetchStJudeScoreboard(env: Env): Promise<boolean> {
 	const data = await response.json();
 	const scores: StJudeScoreboardResponse = stJudeScoreboardResponseSchema.parse(data);
 
-	const results = await Promise.all(scores.entries.map(async (entry) => {
-		const name = entry.name.toLowerCase();
-		if (!isCoFounder(name)) {
-			return false;
-		}
+	const coFounderEntries = scores.entries
+		.map((entry) => ({ ...entry, name: entry.name.toLowerCase() }))
+		.filter((entry) => isCoFounder(entry.name));
 
-		const key = makeScoreKey(name);
-		const previousString = await env.RELAY_FOR_ST_JUDE.get(key);
+	const previousStrings = await env.RELAY_FOR_ST_JUDE.get(coFounderEntries.map((entry) => makeScoreKey(entry.name)));
+
+	const results = await Promise.all(coFounderEntries.map(async (entry) => {
+		const key = makeScoreKey(entry.name);
+		const previousString = previousStrings.get(key) ?? null;
 		const previous = previousString !== null ? Number.parseFloat(previousString) : null;
 
 		if (previous !== entry.score) {
