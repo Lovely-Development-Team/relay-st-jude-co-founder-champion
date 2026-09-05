@@ -12,6 +12,7 @@
     "wrangler": "^4.129.0"
   },
   "dependencies": {
+    "jose": "^6.2.11",
     "zod": "^4.5.4"
   }
 }

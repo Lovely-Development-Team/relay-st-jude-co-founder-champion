@@ -1,5 +1,7 @@
 import { IRequestStrict, Router, status, StatusError } from 'itty-router';
-import { z } from 'zod';
+import { notifyScoreChange } from './apns';
+import { checkAuthentication } from './auth';
+import liveActivityRouter from './liveActivityRouter';
 
 // Barring a dramatic upheaval, I think we're safe to hardcode this.
 export const CO_FOUNDERS = ['myke', 'stephen'] as const;
@@ -7,24 +9,13 @@ export const CO_FOUNDERS = ['myke', 'stephen'] as const;
 type ScoreRequest = Request & IRequestStrict & { coFounder?: typeof CO_FOUNDERS[number] }
 
 // now let's create a router (note the lack of "new")
-const router = Router<ScoreRequest, [Env]>();
+const router = Router<ScoreRequest, [Env, ExecutionContext]>();
 
 export function makeScoreKey(coFounder: string | undefined) {
 	return `score|${coFounder}`;
 }
 
-function checkAuthentication(request: ScoreRequest, env: Env) {
-	const authHeader = request.headers.get("authorization");
-	if (!authHeader || !authHeader.startsWith("Bearer ")) {
-		throw new StatusError(401);
-	}
-	const token = authHeader.substring(7, authHeader.length);
-	if (token !== env.ST_JUDE_SCOREBOARD_KEY) {
-		throw new StatusError(403);
-	}
-}
-
-router.get('/api/co-founders', async (request, env: Env) => {
+router.get('/api/co-founders', async (request, env: Env, ctx: ExecutionContext) => {
 	const [mykeScoreString, stephenScoreString] = await Promise.all(
 		[env.RELAY_FOR_ST_JUDE.get(makeScoreKey('myke')),
 			env.RELAY_FOR_ST_JUDE.get(makeScoreKey('stephen'))]
@@ -56,7 +47,7 @@ const checkCoFounder = (request: ScoreRequest) => {
 	request.coFounder = coFounder;
 };
 
-router.get('/api/co-founders/:cofounder', checkCoFounder, async (request, env: Env) => {
+router.get('/api/co-founders/:cofounder', checkCoFounder, async (request, env: Env, ctx: ExecutionContext) => {
 	const stringScore = await env.RELAY_FOR_ST_JUDE.get(makeScoreKey(request.coFounder));
 	if (!stringScore) {
 		return { score: 0 };
@@ -67,7 +58,7 @@ router.get('/api/co-founders/:cofounder', checkCoFounder, async (request, env: E
 	};
 });
 
-router.put('/api/co-founders/:cofounder', checkAuthentication, checkCoFounder, async (request, env: Env) => {
+router.put('/api/co-founders/:cofounder', checkAuthentication, checkCoFounder, async (request, env: Env, ctx: ExecutionContext) => {
 	const body = await request.json<{ score?: unknown }>();
 	// Empty strings and non-existent values are disallowed, but zero is allowed
 	if (!body.score && body.score != 0) {
@@ -77,29 +68,26 @@ router.put('/api/co-founders/:cofounder', checkAuthentication, checkCoFounder, a
 		throw new StatusError(422, 'Scores must be a number');
 	}
 	await env.RELAY_FOR_ST_JUDE.put(makeScoreKey(request.coFounder), String(body.score));
-	return status(204);
-});
 
-const PUSH_TOKEN_TYPES = ['widget', 'liveActivityStart', 'liveActivityUpdate'] as const;
+	// KV reads can lag behind writes (eventual
+	// consistency), so don't re-read it from KV a moment later. The other co-founder's
+	// score wasn't just written, so it's safe to read from KV.
+	const otherCoFounder = CO_FOUNDERS.find((name) => name !== request.coFounder)!;
+	const otherScoreString = await env.RELAY_FOR_ST_JUDE.get(makeScoreKey(otherCoFounder));
+	const otherScore = otherScoreString !== null ? Number.parseFloat(otherScoreString) : 0;
 
-const updateTokenRequestSchema = z.object({
-	tokenType: z.enum(PUSH_TOKEN_TYPES),
-	scopeId: z.string(),
-	token: z.string().min(3),
-})
+	const scores = { myke: 0, stephen: 0 };
+	scores[request.coFounder!] = body.score;
+	scores[otherCoFounder] = otherScore;
 
-router.put('/api/push-tokens/:deviceId', checkAuthentication, async (request, env: Env) => {
-	const deviceId = request.params['deviceId'];
-	const body = updateTokenRequestSchema.parse(await request.json());
-
-	await env.WIDGET_PUSH_TOKENS.prepare(
-		`INSERT INTO push_tokens (device_id, token_type, scope_id, token, updated_at)
-		 VALUES (?1, ?2, ?3, ?4, ?5)
-		 ON CONFLICT(device_id, token_type, scope_id) DO UPDATE SET token = excluded.token, updated_at = excluded.updated_at`
-	).bind(deviceId, body.tokenType, body.scopeId, body.token, new Date().toISOString()).run();
+	ctx.waitUntil(notifyScoreChange(env, scores).catch((err) => {
+		console.error('Failed to send push notifications', err);
+	}));
 
 	return status(204);
 });
+
+router.all('/api/push-tokens/*', liveActivityRouter.handle);
 
 // 404 for everything else
 router.all('*', () => {

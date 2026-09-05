@@ -19,6 +19,8 @@ persist = true
 # Docs: https://developers.cloudflare.com/workers/platform/environment-variables
 [vars]
 ST_JUDE_SCOREBOARD_URL = "https://relay-scoreboard-v2.prod.experience.stjude.org/api/scoreboard"
+APNS_BUNDLE_ID = "dev.snailedit.stjude" # TODO: confirm real bundle ID
+APNS_LIVE_ACTIVITY_ATTRIBUTES_TYPE = "ScoreAttributes"
 
 # Bind a KV Namespace. Use KV as persistent storage for small key-value pairs.
 # Docs: https://developers.cloudflare.com/workers/runtime-apis/kv
@@ -27,7 +29,11 @@ binding = "RELAY_FOR_ST_JUDE"
 id = "470ca90f43294c0aa5bf6c789ded6095"
 
 [secrets]
-required = [ "ST_JUDE_SCOREBOARD_KEY" ]
+required = [
+	"ST_JUDE_SCOREBOARD_KEY", "PUSH_TOKEN_UPDATE_KEY",
+	"APNS_AUTH_KEY_SANDBOX", "APNS_KEY_ID_SANDBOX",
+	"APNS_AUTH_KEY_PRODUCTION", "APNS_KEY_ID_PRODUCTION", "APNS_TEAM_ID",
+]
 
 # Bind a D1 database. Use D1 for relational storage.
 # Docs: https://developers.cloudflare.com/d1/

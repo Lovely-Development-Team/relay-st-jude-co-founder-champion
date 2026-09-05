@@ -11,6 +11,7 @@
 import apiRouter from './router';
 import { error, json } from 'itty-router';
 import { fetchStJudeScoreboard } from './scoreboard';
+import { notifyScoreChange } from './apns';
 
 // Export a default object containing event handlers
 export default {
@@ -21,7 +22,7 @@ export default {
 		const url = new URL(request.url);
 
 		if (url.pathname.startsWith('/api/')) {
-			return apiRouter.handle(request, env).then(json).catch(error);
+			return apiRouter.handle(request, env, ctx).then(json).catch(error);
 		}
 
 		return new Response(
@@ -38,8 +39,12 @@ export default {
 	// The scheduled handler runs on the cron trigger configured in wrangler.toml
 	// and polls St Jude's scoreboard to keep KV in sync with the live totals
 	async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-		ctx.waitUntil(fetchStJudeScoreboard(env).catch((err) => {
-			console.error('St Jude scoreboard poll threw an error', err);
-		}));
+		ctx.waitUntil(
+			fetchStJudeScoreboard(env)
+				.then((changed) => changed ? notifyScoreChange(env) : undefined)
+				.catch((err) => {
+					console.error('St Jude scoreboard poll threw an error', err);
+				})
+		);
 	}
 };
