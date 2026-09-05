@@ -87,6 +87,7 @@ export async function notifyScoreChange(
 		`SELECT device_id, token_type, scope_id, token, environment FROM push_tokens WHERE token_type IN ('widget', 'liveActivityUpdate')`
 	).all<PushTokenRow>();
 
+	console.log('Sending notifications for new scores', scores);
 	const results = await Promise.allSettled(rows.map((row) => {
 		if (row.token_type === 'widget') {
 			return sendApnsPush(env, row.token, row.environment, 'background', env.APNS_BUNDLE_ID, { aps: { 'content-changed': 1 } }, 5)
