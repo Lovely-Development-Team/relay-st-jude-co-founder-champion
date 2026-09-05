@@ -2,6 +2,8 @@ import { IRequestStrict, Router, status, StatusError } from 'itty-router';
 import { notifyScoreChange } from './apns';
 import { checkAuthentication } from './auth';
 import liveActivityRouter from './liveActivityRouter';
+import liveActivityChannelRouter from './liveActivityChannelRouter';
+import { ONE_DAY, ONE_HOUR } from './constants';
 
 // Barring a dramatic upheaval, I think we're safe to hardcode this.
 export const CO_FOUNDERS = ['myke', 'stephen'] as const;
@@ -15,6 +17,8 @@ export function makeScoreKey(coFounder: string | undefined) {
 	return `score|${coFounder}`;
 }
 
+export const CO_FOUNDER_SCORES_CACHE_TAG = 'co-founder-scores';
+
 router.get('/api/co-founders', async (request, env: Env, ctx: ExecutionContext) => {
 	const [mykeScoreString, stephenScoreString] = await Promise.all(
 		[env.RELAY_FOR_ST_JUDE.get(makeScoreKey('myke')),
@@ -22,14 +26,17 @@ router.get('/api/co-founders', async (request, env: Env, ctx: ExecutionContext) 
 	);
 	const mykeScore = mykeScoreString !== null ? Number.parseFloat(mykeScoreString) : 0;
 	const stephenScore = stephenScoreString !== null ? Number.parseFloat(stephenScoreString) : 0;
-	return {
-		myke: {
-			score: mykeScore
+	return new Response(JSON.stringify({
+		myke: { score: mykeScore },
+		stephen: { score: stephenScore },
+	}), {
+		headers: {
+			'content-type': 'application/json',
+			'cache-control': 'public, max-age=300',
+			'cdn-cache-control': `public, max-age=${ONE_HOUR}, stale-while-revalidate=${ONE_DAY}`,
+			'cache-tag': CO_FOUNDER_SCORES_CACHE_TAG,
 		},
-		stephen: {
-			score: stephenScore
-		}
-	};
+	});
 });
 
 export function isCoFounder(name: string): name is typeof CO_FOUNDERS[number] {
@@ -49,13 +56,15 @@ const checkCoFounder = (request: ScoreRequest) => {
 
 router.get('/api/co-founders/:cofounder', checkCoFounder, async (request, env: Env, ctx: ExecutionContext) => {
 	const stringScore = await env.RELAY_FOR_ST_JUDE.get(makeScoreKey(request.coFounder));
-	if (!stringScore) {
-		return { score: 0 };
-	}
-	const score = Number.parseFloat(stringScore) || 0;
-	return {
-		score
-	};
+	const score = stringScore !== null ? Number.parseFloat(stringScore) || 0 : 0;
+	return new Response(JSON.stringify({ score }), {
+		headers: {
+			'content-type': 'application/json',
+			'cache-control': 'public, max-age=300',
+			'cdn-cache-control': `public, max-age=${ONE_HOUR}, stale-while-revalidate=${ONE_DAY}`,
+			'cache-tag': CO_FOUNDER_SCORES_CACHE_TAG,
+		},
+	});
 });
 
 router.put('/api/co-founders/:cofounder', checkAuthentication, checkCoFounder, async (request, env: Env, ctx: ExecutionContext) => {
@@ -80,6 +89,8 @@ router.put('/api/co-founders/:cofounder', checkAuthentication, checkCoFounder, a
 	scores[request.coFounder!] = body.score;
 	scores[otherCoFounder] = otherScore;
 
+	// notifyScoreChange also purges the co-founder-scores cache tag, since both this handler
+	// and the cron-driven scoreboard sync call it whenever a score actually changes.
 	ctx.waitUntil(notifyScoreChange(env, scores).catch((err) => {
 		console.error('Failed to send push notifications', err);
 	}));
@@ -88,6 +99,7 @@ router.put('/api/co-founders/:cofounder', checkAuthentication, checkCoFounder, a
 });
 
 router.all('/api/push-tokens/*', liveActivityRouter.handle);
+router.all('/api/live-activity-channel', liveActivityChannelRouter.handle);
 
 // 404 for everything else
 router.all('*', () => {

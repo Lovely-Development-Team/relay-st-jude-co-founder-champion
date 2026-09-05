@@ -6,7 +6,7 @@ type LiveActivityRequest = Request & IRequestStrict;
 
 const router = Router<LiveActivityRequest, [Env, ExecutionContext]>({ base: '/api/push-tokens' });
 
-const PUSH_TOKEN_TYPES = ['widget', 'liveActivityStart', 'liveActivityUpdate'] as const;
+const PUSH_TOKEN_TYPES = ['widget', 'liveActivityStart'] as const;
 
 const tokenEntrySchema = z.object({
 	scopeId: z.string(),
