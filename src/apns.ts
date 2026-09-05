@@ -64,7 +64,12 @@ async function sendApnsPush(
 	}
 
 	const body = await response.json<{ reason?: string }>().catch((): { reason?: string } => ({}));
-	console.error(`APNs push failed: ${response.status} ${body.reason ?? ''} (device ${deviceToken})`);
+	let errMsg = `APNs push failed: ${response.status} ${body.reason ?? ''} (device ${deviceToken})`;
+	if (response.status === 410 && body.reason === 'BadDeviceToken') {
+		console.log(errMsg);
+	} else {
+		console.error(errMsg);
+	}
 	return { ok: false, status: response.status, reason: body.reason };
 }
 
