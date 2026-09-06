@@ -44,8 +44,7 @@ export default {
 	async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
 		ctx.waitUntil(
 			fetchStJudeScoreboard(env)
-				.then((changed) => changed ? notifyScoreChange(env) : undefined)
-				.then(() => new Date() >= LIVE_ACTIVITY_START_TIME ? sendLiveActivityStarts(env) : undefined)
+				.then((updatedScores) => updatedScores ? notifyScoreChange(env, updatedScores) : undefined)
 				.catch((err) => {
 					console.error('St Jude scoreboard poll threw an error', err);
 				})

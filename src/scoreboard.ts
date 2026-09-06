@@ -1,4 +1,4 @@
-import { isCoFounder, makeScoreKey } from './router';
+import { getScores, isCoFounder, makeScoreKey } from './router';
 import { z } from 'zod';
 
 const stJudeScoreboardResponseSchema = z.object({
@@ -12,11 +12,16 @@ const stJudeScoreboardResponseSchema = z.object({
 
 type StJudeScoreboardResponse = z.infer<typeof stJudeScoreboardResponseSchema>;
 
-export async function fetchStJudeScoreboard(env: Env): Promise<boolean> {
+/**
+ *
+ * @param {Env} env
+ * @returns {Promise<{myke: number, stephen: number} | undefined>} The up-to-date co-founder scores if any changed, or undefined if nothing changed
+ */
+export async function fetchStJudeScoreboard(env: Env): Promise<{ myke: number; stephen: number } | undefined> {
 	const response = await fetch(env.ST_JUDE_SCOREBOARD_URL);
 	if (!response.ok) {
 		console.error(`St Jude scoreboard poll failed with status ${response.status}`);
-		return false;
+		return undefined;
 	}
 
 	const data = await response.json();
@@ -24,21 +29,18 @@ export async function fetchStJudeScoreboard(env: Env): Promise<boolean> {
 
 	const coFounderEntries = scores.entries
 		.map((entry) => ({ ...entry, name: entry.name.toLowerCase() }))
-		.filter((entry) => isCoFounder(entry.name));
+		.filter((entry): entry is typeof entry & { name: 'myke' | 'stephen' } => isCoFounder(entry.name));
 
-	const previousStrings = await env.RELAY_FOR_ST_JUDE.get(coFounderEntries.map((entry) => makeScoreKey(entry.name)));
+	const updatedScores = await getScores(env);
+	let changed = false;
 
-	const results = await Promise.all(coFounderEntries.map(async (entry) => {
-		const key = makeScoreKey(entry.name);
-		const previousString = previousStrings.get(key) ?? null;
-		const previous = previousString !== null ? Number.parseFloat(previousString) : null;
-
-		if (previous !== entry.score) {
-			await env.RELAY_FOR_ST_JUDE.put(key, String(entry.score));
-			return true;
+	await Promise.all(coFounderEntries.map(async (entry) => {
+		if (updatedScores[entry.name] !== entry.score) {
+			await env.RELAY_FOR_ST_JUDE.put(makeScoreKey(entry.name), String(entry.score));
+			updatedScores[entry.name] = entry.score;
+			changed = true;
 		}
-		return false;
 	}));
 
-	return results.some(r=> r);
+	return changed ? updatedScores : undefined;
 }
