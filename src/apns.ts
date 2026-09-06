@@ -2,6 +2,7 @@ import { importPKCS8, SignJWT } from 'jose';
 import { StatusError } from 'itty-router';
 import { cache } from 'cloudflare:workers';
 import { CO_FOUNDER_SCORES_CACHE_TAG, getScores } from './router';
+import { ONE_HOUR } from './constants';
 
 export type ApnsEnvironment = 'sandbox' | 'production';
 type ApnsPushType = 'background' | 'liveactivity';
@@ -122,6 +123,16 @@ export async function getOrCreateChannel(env: Env, environment: ApnsEnvironment)
 	}
 
 	const channelId = await createChannel(env, environment);
+
+	// Concurrent first-requests can each get past the read above and create their own channel.
+	// Re-check right before writing so only the first writer's channel ID is kept — the losers'
+	// freshly-created channels are simply left unregistered in KV rather than orphaning a
+	// caller who already received the winning ID.
+	// This is not a perfect fix, given the limited guarantees of KV, but it's "good enough" in practice.
+	const raceWinnerChannelId = await env.RELAY_FOR_ST_JUDE.get(makeChannelKey(environment));
+	if (raceWinnerChannelId) {
+		return raceWinnerChannelId;
+	}
 	await env.RELAY_FOR_ST_JUDE.put(makeChannelKey(environment), channelId);
 
 	try {
@@ -246,23 +257,48 @@ export async function notifyScoreChange(
 	}));
 }
 
-// Sends a push-to-start for every stored liveActivityStart token, per environment.
+const LIVE_ACTIVITY_LAST_START_KEY = 'live-activity-last-start';
+
+// iOS force-ends a Live Activity after ~8h, so it needs restarting periodically for the rest of
+// the event — this must stay comfortably under that OS cap.
+const LIVE_ACTIVITY_RESTART_INTERVAL_MS = 7 * ONE_HOUR * 1000;
+
+// Runs sendLiveActivityStarts at most once per LIVE_ACTIVITY_RESTART_INTERVAL_MS, guarded by a KV
+// timestamp — the cron trigger fires every 15 minutes for the rest of the event once
+// LIVE_ACTIVITY_START_TIME passes, and without this the push-to-start would otherwise be re-sent
+// to every device on every tick instead of only when the activity is about to expire.
+export async function sendLiveActivityStartsOnce(env: Env): Promise<void> {
+	const lastStartString = await env.RELAY_FOR_ST_JUDE.get(LIVE_ACTIVITY_LAST_START_KEY);
+	const lastStart = lastStartString !== null ? Number.parseInt(lastStartString, 10) : null;
+	const now = Date.now();
+	if (lastStart !== null && now - lastStart < LIVE_ACTIVITY_RESTART_INTERVAL_MS) return;
+
+	await env.RELAY_FOR_ST_JUDE.put(LIVE_ACTIVITY_LAST_START_KEY, String(now));
+	await sendLiveActivityStarts(env);
+}
+
+// Sends a push-to-start for every stored liveActivityStart token whose device hasn't opted out
+// via device_settings (absent row defaults to opted in), per environment.
 // Skips an environment with no channel in KV yet.
-export async function sendLiveActivityStarts(env: Env): Promise<void> {
+async function sendLiveActivityStarts(env: Env): Promise<void> {
 	const scores = await getScores(env);
 	const { results: startRows } = await env.WIDGET_PUSH_TOKENS.prepare(
-		`SELECT device_id, token_type, scope_id, token, environment FROM push_tokens WHERE token_type = 'liveActivityStart'`
+		`SELECT push_tokens.device_id, push_tokens.token_type, push_tokens.scope_id, push_tokens.token, push_tokens.environment
+		 FROM push_tokens
+		 LEFT JOIN device_settings ON device_settings.device_id = push_tokens.device_id
+		 WHERE push_tokens.token_type = 'liveActivityStart'
+		 AND COALESCE(device_settings.auto_start_live_activity, 1) = 1`
 	).all<PushTokenRow>();
 
 	const channelIds = await env.RELAY_FOR_ST_JUDE.get([makeChannelKey('sandbox'), makeChannelKey('production')]);
 
 	const startResults = (await Promise.allSettled(startRows.map((row) =>
 		{
-			const environment = channelIds.get(row.environment);
-			if (!environment) {
+			const channelId = channelIds.get(makeChannelKey(row.environment));
+			if (!channelId) {
 				return Promise.resolve({ok: false, status: undefined, reason: 'No channel for environment'});
 			}
-			return startLiveActivity(env, row.token, row.environment, {}, scores, environment!);}
+			return startLiveActivity(env, row.token, row.environment, {}, scores, channelId);}
 	)));
 	console.log(`Starting live activity for ${startRows.length} devices`)
 

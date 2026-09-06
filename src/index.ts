@@ -11,7 +11,7 @@
 import apiRouter from './router';
 import { error, json } from 'itty-router';
 import { fetchStJudeScoreboard } from './scoreboard';
-import { notifyScoreChange, sendLiveActivityStarts } from './apns';
+import { notifyScoreChange, sendLiveActivityStartsOnce } from './apns';
 
 // Live Activities shouldn't start until the event does — Friday, 2 October 2026, 17:00 BST.
 const LIVE_ACTIVITY_START_TIME = new Date('2026-10-02T16:00:00Z');
@@ -45,6 +45,7 @@ export default {
 		ctx.waitUntil(
 			fetchStJudeScoreboard(env)
 				.then((updatedScores) => updatedScores ? notifyScoreChange(env, updatedScores) : undefined)
+				.then(() => new Date() >= LIVE_ACTIVITY_START_TIME ? sendLiveActivityStartsOnce(env) : undefined)
 				.catch((err) => {
 					console.error('St Jude scoreboard poll threw an error', err);
 				})
