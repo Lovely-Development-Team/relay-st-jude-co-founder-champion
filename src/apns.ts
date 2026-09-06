@@ -246,20 +246,50 @@ export async function notifyScoreChange(
 	}));
 }
 
-// Not wired into notifyScoreChange — push-to-start should be triggered explicitly
-// (e.g. a manual admin action), not on every score change.
-// This has to be per-device and not a broadcast, but we can then update it using a channel.
+// Sends a push-to-start for every stored liveActivityStart token, per environment.
+// Skips an environment with no channel in KV yet.
+export async function sendLiveActivityStarts(env: Env): Promise<void> {
+	const scores = await getScores(env);
+	const { results: startRows } = await env.WIDGET_PUSH_TOKENS.prepare(
+		`SELECT device_id, token_type, scope_id, token, environment FROM push_tokens WHERE token_type = 'liveActivityStart'`
+	).all<PushTokenRow>();
+
+	const channelIds = await env.RELAY_FOR_ST_JUDE.get([makeChannelKey('sandbox'), makeChannelKey('production')]);
+
+	const startResults = (await Promise.allSettled(startRows.map((row) =>
+		{
+			const environment = channelIds.get(row.environment);
+			if (!environment) {
+				return Promise.resolve({ok: false, status: undefined, reason: 'No channel for environment'});
+			}
+			return startLiveActivity(env, row.token, row.environment, {}, scores, environment!);}
+	)));
+	console.log(`Starting live activity for ${startRows.length} devices`)
+
+	await Promise.all(startResults.map(async (result, i) => {
+		if (result.status === 'rejected') {
+			console.error(`Live Activity start push threw for device ${startRows[i].device_id}`, result.reason);
+			return;
+		}
+		if (result.value.ok) return;
+		if (result.value.status === 410 || result.value.reason === 'BadDeviceToken') {
+			const row = startRows[i];
+			await env.WIDGET_PUSH_TOKENS.prepare(
+				`DELETE FROM push_tokens WHERE device_id = ?1 AND token_type = ?2 AND scope_id = ?3 AND environment = ?4 AND token = ?5`
+			).bind(row.device_id, row.token_type, row.scope_id, row.environment, row.token).run();
+		}
+	}));
+}
+
+// Per-device push-to-star, as we can only use broadcast channels for updates.
 export async function startLiveActivity(
 	env: Env,
 	deviceToken: string,
 	environment: ApnsEnvironment,
-	attributes: unknown
+	attributes: unknown,
+	scores: { myke: number; stephen: number },
+	channelId: string
 ): Promise<{ ok: true } | { ok: false; status: number; reason?: string }> {
-	const [scores, channelId] = await Promise.all([
-		getScores(env),
-		getOrCreateChannel(env, environment),
-	]);
-
 	return sendApnsPush(
 		env,
 		deviceToken,
@@ -274,6 +304,10 @@ export async function startLiveActivity(
 				'attributes-type': env.APNS_LIVE_ACTIVITY_ATTRIBUTES_TYPE,
 				attributes,
 				'content-state': scores,
+				"alert": {
+					"title": "Relay Podcastathon",
+					"body": "Starting now!"
+				}
 			},
 		},
 		10
