@@ -16,6 +16,8 @@ persist = true
 [cache]
 enabled = true
 
+[placement]
+mode = "smart"
 
 # Variable bindings. These are arbitrary, plaintext strings (similar to environment variables)
 # Note: Use secrets to store sensitive data.
