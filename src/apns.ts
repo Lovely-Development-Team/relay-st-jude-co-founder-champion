@@ -7,6 +7,16 @@ import { ONE_HOUR } from './constants';
 export type ApnsEnvironment = 'sandbox' | 'production';
 type ApnsPushType = 'background' | 'liveactivity';
 
+/**
+ * Indicates that the channel is no longer recognised by APNS and a new one needs to be created
+ */
+export class ChannelInvalidatedError extends Error {
+	constructor(public readonly environment: ApnsEnvironment) {
+		super(`Live Activity channel for ${environment} is no longer registered with APNs`);
+		this.name = 'ChannelInvalidatedError';
+	}
+}
+
 const cachedTokens: Partial<Record<ApnsEnvironment, { jwt: string; expiresAt: number }>> = {};
 
 // Sandbox and production use separate Auth Keys
@@ -286,25 +296,88 @@ const LIVE_ACTIVITY_LAST_START_KEY = 'live-activity-last-start';
 // the event — this must stay comfortably under that OS cap.
 const LIVE_ACTIVITY_RESTART_INTERVAL_MS = 7 * ONE_HOUR * 1000;
 
-// Runs sendLiveActivityStarts at most once per LIVE_ACTIVITY_RESTART_INTERVAL_MS, guarded by a KV
-// timestamp — the cron trigger fires every 15 minutes for the rest of the event once
-// LIVE_ACTIVITY_START_TIME passes, and without this the push-to-start would otherwise be re-sent
-// to every device on every tick instead of only when the activity is about to expire.
-export async function sendLiveActivityStartsOnce(env: Env): Promise<void> {
+async function sendBroadcastEnd(env: Env, environment: ApnsEnvironment, channelId: string, scores: { myke: number; stephen: number }): Promise<void> {
+	const now = Math.floor(Date.now() / 1000);
+	const result = await sendBroadcastPush(env, channelId, environment, {
+		aps: {
+			timestamp: now,
+			event: 'end',
+			'content-state': scores,
+			'dismissal-date': now,
+		},
+	});
+	if (result.ok) return;
+
+	if (result.reason !== 'ChannelNotRegistered') {
+		throw new Error(`Live Activity end broadcast failed for ${environment}: ${result.status} ${result.reason ?? ''}`);
+	}
+
+	await env.RELAY_FOR_ST_JUDE.delete(makeChannelKey(environment));
+	try {
+		const purgeResult = await cache.purge({ tags: [liveActivityChannelCacheTag(environment)] });
+		if (!purgeResult.success) {
+			console.error(`Failed to purge Live Activity channel cache for ${environment}`, purgeResult.errors);
+		}
+	} catch (err) {
+		console.error(`Threw while purging Live Activity channel cache for ${environment}`, err);
+	}
+	console.log(`Live Activity channel for ${environment} is gone; existing activities are orphaned until the app relaunches and fetches a new channel`);
+	throw new ChannelInvalidatedError(environment);
+}
+
+/**
+ * Runs sendLiveActivityStarts at most once per LIVE_ACTIVITY_RESTART_INTERVAL_MS, guarded by a KV
+ * timestamp.
+ *
+ * If there is an existing activity, it will end that activity before creating a new one.
+ */
+export async function sendLiveActivityStartsOnce(env: Env, ctx: ExecutionContext): Promise<void> {
 	const lastStartString = await env.RELAY_FOR_ST_JUDE.get(LIVE_ACTIVITY_LAST_START_KEY);
 	const lastStart = lastStartString !== null ? Number.parseInt(lastStartString, 10) : null;
 	const now = Date.now();
 	if (lastStart !== null && now - lastStart < LIVE_ACTIVITY_RESTART_INTERVAL_MS) return;
 
+	const isFirstRun = lastStart === null;
 	await env.RELAY_FOR_ST_JUDE.put(LIVE_ACTIVITY_LAST_START_KEY, String(now));
-	await sendLiveActivityStarts(env);
+
+	const scores = await getScores(env);
+	const channelIds = await env.RELAY_FOR_ST_JUDE.get([makeChannelKey('sandbox'), makeChannelKey('production')]);
+	const environments: ApnsEnvironment[] = ['sandbox', 'production'];
+
+	// Nothing has been started yet on the very first run, so there's nothing to end.
+	if (!isFirstRun) {
+		const invalidated = await Promise.all(environments.map(async (environment) => {
+			const channelId = channelIds.get(makeChannelKey(environment));
+			if (!channelId) return false;
+			try {
+				await sendBroadcastEnd(env, environment, channelId, scores);
+				return false;
+			} catch (err) {
+				if (err instanceof ChannelInvalidatedError) return true;
+				// A genuine send failure isn't a signal the channel is dead — keep it and let the
+				// restart below proceed with it as normal.
+				console.error(`Threw while sending Live Activity end broadcast for ${environment}`, err);
+				return false;
+			}
+		}));
+		await Promise.all(environments.map(async (environment, i) => {
+			if (!invalidated[i]) return;
+			const newChannelId = await getOrCreateChannel(env, environment, ctx);
+			channelIds.set(makeChannelKey(environment), newChannelId);
+		}));
+	}
+
+	await sendLiveActivityStarts(env, scores, channelIds);
 }
 
 // Sends a push-to-start for every stored liveActivityStart token whose device hasn't opted out
 // via device_settings (absent row defaults to opted in), per environment.
 // Skips an environment with no channel in KV yet.
-async function sendLiveActivityStarts(env: Env): Promise<void> {
-	const scores = await getScores(env);
+async function sendLiveActivityStarts(
+	env: Env,
+	scores: { myke: number; stephen: number },
+	channelIds: Map<string, string | null>
+): Promise<void> {
 	const { results: startRows } = await env.WIDGET_PUSH_TOKENS.prepare(
 		`SELECT push_tokens.device_id, push_tokens.token_type, push_tokens.scope_id, push_tokens.token, push_tokens.environment
 		 FROM push_tokens
@@ -312,8 +385,6 @@ async function sendLiveActivityStarts(env: Env): Promise<void> {
 		 WHERE push_tokens.token_type = 'liveActivityStart'
 		 AND COALESCE(device_settings.auto_start_live_activity, 1) = 1`
 	).all<PushTokenRow>();
-
-	const channelIds = await env.RELAY_FOR_ST_JUDE.get([makeChannelKey('sandbox'), makeChannelKey('production')]);
 
 	const startResults = (await Promise.allSettled(startRows.map((row) =>
 		{

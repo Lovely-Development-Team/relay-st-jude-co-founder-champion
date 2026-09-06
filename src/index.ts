@@ -45,7 +45,7 @@ export default {
 		ctx.waitUntil(
 			fetchStJudeScoreboard(env)
 				.then((updatedScores) => updatedScores ? notifyScoreChange(env, updatedScores) : undefined)
-				.then(() => new Date() >= LIVE_ACTIVITY_START_TIME ? sendLiveActivityStartsOnce(env) : undefined)
+				.then(() => new Date() >= LIVE_ACTIVITY_START_TIME ? sendLiveActivityStartsOnce(env, ctx) : undefined)
 				.catch((err) => {
 					console.error('St Jude scoreboard poll threw an error', err);
 				})
