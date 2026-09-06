@@ -25,15 +25,19 @@ export default {
 			return apiRouter.handle(request, env, ctx).then(json).catch(error);
 		}
 
-		return new Response(
-			`Try making requests to:
+		if (url.pathname === '/') {
+			return new Response(
+				`Try making requests to:
       <ul>
       <li><code><a href='/api/co-founders'>/api/co-founders</a></code>,</li>
       <li><code><a href='/api/co-founders/myke'>/api/co-founders/myke</a></code>,</li>
       <li><code><a href='/api/co-founders/stephen'>/api/co-founders/stephen</a></code>,</li>
       </ul>`,
-			{ headers: { 'Content-Type': 'text/html' } }
-		);
+				{ headers: { 'Content-Type': 'text/html' } }
+			);
+		}
+
+		return new Response('Not Found', { status: 404 });
 	},
 
 	// The scheduled handler runs on the cron trigger configured in wrangler.toml
