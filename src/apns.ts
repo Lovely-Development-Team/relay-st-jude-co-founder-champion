@@ -188,6 +188,35 @@ async function sendBroadcastPush(
 
 type PushTokenRow = { device_id: string; token_type: string; scope_id: string; token: string; environment: ApnsEnvironment };
 
+// Deletes a row's token only on 410 or reason=BadDeviceToken — a bare 400 can also mean
+// BadTopic, BadPriority, etc., which say nothing about the token and must not delete it.
+async function deleteDeadPushTokens(
+	env: Env,
+	rows: PushTokenRow[],
+	results: PromiseSettledResult<ApnsPushResult>[]
+): Promise<void> {
+	const deadRows: PushTokenRow[] = [];
+	for (let i = 0; i < results.length; i++) {
+		const result = results[i];
+		if (result.status === 'rejected') {
+			console.error(`APNs push threw for device ${rows[i].device_id}`, result.reason);
+			continue;
+		}
+		if (result.value.ok) continue;
+		if (result.value.status === 410 || result.value.reason === 'BadDeviceToken') {
+			deadRows.push(rows[i]);
+		}
+	}
+
+	if (deadRows.length === 0) return;
+
+	await env.WIDGET_PUSH_TOKENS.batch(deadRows.map((row) =>
+		env.WIDGET_PUSH_TOKENS.prepare(
+			`DELETE FROM push_tokens WHERE device_id = ?1 AND token_type = ?2 AND scope_id = ?3 AND environment = ?4 AND token = ?5`
+		).bind(row.device_id, row.token_type, row.scope_id, row.environment, row.token)
+	));
+}
+
 export async function notifyScoreChange(
 	env: Env,
 	updatedScores: { myke: number; stephen: number } | undefined = undefined
@@ -213,21 +242,7 @@ export async function notifyScoreChange(
 		sendApnsPush(env, row.token, row.environment, 'background', env.APNS_BUNDLE_ID, { aps: { 'content-changed': 1 } }, 5)
 	));
 
-	await Promise.all(results.map(async (result, i) => {
-		if (result.status === 'rejected') {
-			console.error(`APNs push threw for device ${rows[i].device_id}`, result.reason);
-			return;
-		}
-		if (result.value.ok) return;
-		// Only these two reasons mean the token itself is dead — a bare 400 can also mean
-		// BadTopic, BadPriority, etc., which say nothing about the token and must not delete it.
-		if (result.value.status === 410 || result.value.reason === 'BadDeviceToken') {
-			const row = rows[i];
-			await env.WIDGET_PUSH_TOKENS.prepare(
-				`DELETE FROM push_tokens WHERE device_id = ?1 AND token_type = ?2 AND scope_id = ?3 AND environment = ?4 AND token = ?5`
-			).bind(row.device_id, row.token_type, row.scope_id, row.environment, row.token).run();
-		}
-	}));
+	await deleteDeadPushTokens(env, rows, results);
 
 	const environments: ApnsEnvironment[] = ['sandbox', 'production'];
 	await Promise.all(environments.map(async (environment) => {
@@ -303,19 +318,7 @@ async function sendLiveActivityStarts(env: Env): Promise<void> {
 	)));
 	console.log(`Starting live activity for ${startRows.length} devices`)
 
-	await Promise.all(startResults.map(async (result, i) => {
-		if (result.status === 'rejected') {
-			console.error(`Live Activity start push threw for device ${startRows[i].device_id}`, result.reason);
-			return;
-		}
-		if (result.value.ok) return;
-		if (result.value.status === 410 || result.value.reason === 'BadDeviceToken') {
-			const row = startRows[i];
-			await env.WIDGET_PUSH_TOKENS.prepare(
-				`DELETE FROM push_tokens WHERE device_id = ?1 AND token_type = ?2 AND scope_id = ?3 AND environment = ?4 AND token = ?5`
-			).bind(row.device_id, row.token_type, row.scope_id, row.environment, row.token).run();
-		}
-	}));
+	await deleteDeadPushTokens(env, startRows, startResults);
 }
 
 // Per-device push-to-star, as we can only use broadcast channels for updates.
