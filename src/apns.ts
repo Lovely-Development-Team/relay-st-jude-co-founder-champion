@@ -292,9 +292,14 @@ export async function notifyScoreChange(
 
 const LIVE_ACTIVITY_LAST_START_KEY = 'live-activity-last-start';
 
-// iOS force-ends a Live Activity after ~8h, so it needs restarting periodically for the rest of
-// the event — this must stay comfortably under that OS cap.
-const LIVE_ACTIVITY_RESTART_INTERVAL_MS = 7 * ONE_HOUR * 1000;
+/**
+ * Reads LIVE_ACTIVITY_RESTART_INTERVAL_HOURS from the environment (configured in wrangler.toml).
+ * iOS force-ends a Live Activity after ~8h, so it needs restarting periodically for the rest of the
+ * event — this must stay comfortably under that OS cap.
+ */
+function liveActivityRestartIntervalMs(env: Env): number {
+	return Number.parseInt(env.LIVE_ACTIVITY_RESTART_INTERVAL_HOURS, 10) * ONE_HOUR * 1000;
+}
 
 async function sendBroadcastEnd(env: Env, environment: ApnsEnvironment, channelId: string, scores: { myke: number; stephen: number }): Promise<void> {
 	const now = Math.floor(Date.now() / 1000);
@@ -335,7 +340,7 @@ export async function sendLiveActivityStartsOnce(env: Env, ctx: ExecutionContext
 	const lastStartString = await env.RELAY_FOR_ST_JUDE.get(LIVE_ACTIVITY_LAST_START_KEY);
 	const lastStart = lastStartString !== null ? Number.parseInt(lastStartString, 10) : null;
 	const now = Date.now();
-	if (lastStart !== null && now - lastStart < LIVE_ACTIVITY_RESTART_INTERVAL_MS) return;
+	if (lastStart !== null && now - lastStart < liveActivityRestartIntervalMs(env)) return;
 
 	const isFirstRun = lastStart === null;
 	await env.RELAY_FOR_ST_JUDE.put(LIVE_ACTIVITY_LAST_START_KEY, String(now));

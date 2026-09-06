@@ -26,6 +26,11 @@ mode = "smart"
 ST_JUDE_SCOREBOARD_URL = "https://relay-scoreboard-v2.prod.experience.stjude.org/api/scoreboard"
 APNS_BUNDLE_ID = "dev.snailedit.stjude" # TODO: confirm real bundle ID
 APNS_LIVE_ACTIVITY_ATTRIBUTES_TYPE = "ScoreAttributes"
+# Live Activities shouldn't start until the event does — an ISO 8601 instant.
+LIVE_ACTIVITY_START_TIME = "2026-10-02T16:00:00Z"
+# iOS force-ends a Live Activity after ~8h, so it needs restarting periodically for the rest of the
+# event — this must stay comfortably under that OS cap.
+LIVE_ACTIVITY_RESTART_INTERVAL_HOURS = "7"
 
 # Bind a KV Namespace. Use KV as persistent storage for small key-value pairs.
 # Docs: https://developers.cloudflare.com/workers/runtime-apis/kv
