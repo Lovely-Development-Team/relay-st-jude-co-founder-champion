@@ -291,6 +291,7 @@ export async function notifyScoreChange(
 }
 
 const LIVE_ACTIVITY_LAST_START_KEY = 'live-activity-last-start';
+const LIVE_ACTIVITY_ENDED_KEY = 'live-activity-ended';
 
 /**
  * Reads LIVE_ACTIVITY_RESTART_INTERVAL_HOURS from the environment (configured in wrangler.toml).
@@ -334,12 +335,20 @@ async function sendBroadcastEnd(env: Env, environment: ApnsEnvironment, channelI
  * Runs sendLiveActivityStarts at most once per LIVE_ACTIVITY_RESTART_INTERVAL_MS, guarded by a KV
  * timestamp.
  *
- * If there is an existing activity, it will end that activity before creating a new one.
+ * If there is an existing activity, it will end that activity before creating a new one. Once past
+ * LIVE_ACTIVITY_END_TIME, ends any existing activity for good instead of restarting it, and does
+ * this only once (guarded by a separate KV flag) rather than on every subsequent scheduled run.
  */
 export async function sendLiveActivityStartsOnce(env: Env, ctx: ExecutionContext): Promise<void> {
+	const now = Date.now();
+
+	if (now >= new Date(env.LIVE_ACTIVITY_END_TIME).getTime()) {
+		await endLiveActivitiesForGood(env);
+		return;
+	}
+
 	const lastStartString = await env.RELAY_FOR_ST_JUDE.get(LIVE_ACTIVITY_LAST_START_KEY);
 	const lastStart = lastStartString !== null ? Number.parseInt(lastStartString, 10) : null;
-	const now = Date.now();
 	if (lastStart !== null && now - lastStart < liveActivityRestartIntervalMs(env)) return;
 
 	const isFirstRun = lastStart === null;
@@ -373,6 +382,37 @@ export async function sendLiveActivityStartsOnce(env: Env, ctx: ExecutionContext
 	}
 
 	await sendLiveActivityStarts(env, scores, channelIds);
+}
+
+/**
+ * Sends a final end broadcast to every environment with an active channel.
+ */
+async function endLiveActivitiesForGood(env: Env): Promise<void> {
+	const alreadyEndedFor = await env.RELAY_FOR_ST_JUDE.get(LIVE_ACTIVITY_ENDED_KEY);
+	if (alreadyEndedFor === env.LIVE_ACTIVITY_END_TIME) return;
+
+	// Nothing has ever started if the start gate never opened — nothing to end.
+	const lastStart = await env.RELAY_FOR_ST_JUDE.get(LIVE_ACTIVITY_LAST_START_KEY);
+	if (lastStart === null) {
+		await env.RELAY_FOR_ST_JUDE.put(LIVE_ACTIVITY_ENDED_KEY, env.LIVE_ACTIVITY_END_TIME);
+		return;
+	}
+
+	const scores = await getScores(env);
+	const environments: ApnsEnvironment[] = ['sandbox', 'production'];
+	await Promise.all(environments.map(async (environment) => {
+		const channelId = await env.RELAY_FOR_ST_JUDE.get(makeChannelKey(environment));
+		if (!channelId) return;
+		try {
+			await sendBroadcastEnd(env, environment, channelId, scores);
+		} catch (err) {
+			// A ChannelInvalidatedError here just means the channel is already dead — either way,
+			// nothing more needs sending, so it's not distinguished from a genuine send failure.
+			console.error(`Threw while sending final Live Activity end broadcast for ${environment}`, err);
+		}
+	}));
+
+	await env.RELAY_FOR_ST_JUDE.put(LIVE_ACTIVITY_ENDED_KEY, env.LIVE_ACTIVITY_END_TIME);
 }
 
 // Sends a push-to-start for every stored liveActivityStart token whose device hasn't opted out
