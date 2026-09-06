@@ -36,6 +36,7 @@ async function getApnsJwt(env: Env, environment: ApnsEnvironment): Promise<strin
 	return jwt;
 }
 
+type ApnsPushResult = { ok: true } | { ok: false; status: number; reason?: string };
 async function sendApnsPush(
 	env: Env,
 	deviceToken: string,
@@ -44,7 +45,7 @@ async function sendApnsPush(
 	topic: string,
 	payload: unknown,
 	priority: 5 | 10
-): Promise<{ ok: true } | { ok: false; status: number; reason?: string }> {
+): Promise<ApnsPushResult> {
 	// wrangler dev doesn't support outbound HTTP/2, which APNs requires — this fetch only
 	// succeeds against a deployed Worker (see https://github.com/cloudflare/workerd/issues/4841).
 	const host = environment === 'sandbox' ? 'api.sandbox.push.apple.com' : 'api.push.apple.com';
@@ -152,7 +153,7 @@ async function sendBroadcastPush(
 	channelId: string,
 	environment: ApnsEnvironment,
 	payload: unknown
-): Promise<{ ok: true } | { ok: false; status: number; reason?: string }> {
+): Promise<ApnsPushResult> {
 	const host = environment === 'sandbox' ? 'api.sandbox.push.apple.com' : 'api.push.apple.com';
 	const jwt = await getApnsJwt(env, environment);
 
@@ -296,7 +297,7 @@ async function sendLiveActivityStarts(env: Env): Promise<void> {
 		{
 			const channelId = channelIds.get(makeChannelKey(row.environment));
 			if (!channelId) {
-				return Promise.resolve({ok: false, status: undefined, reason: 'No channel for environment'});
+				return Promise.resolve<ApnsPushResult>({ ok: false, status: 0, reason: 'No channel for environment' });
 			}
 			return startLiveActivity(env, row.token, row.environment, {}, scores, channelId);}
 	)));
@@ -325,7 +326,7 @@ export async function startLiveActivity(
 	attributes: unknown,
 	scores: { myke: number; stephen: number },
 	channelId: string
-): Promise<{ ok: true } | { ok: false; status: number; reason?: string }> {
+): Promise<ApnsPushResult> {
 	return sendApnsPush(
 		env,
 		deviceToken,
