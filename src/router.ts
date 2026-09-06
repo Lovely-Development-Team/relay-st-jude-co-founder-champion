@@ -3,6 +3,7 @@ import { notifyScoreChange } from './apns';
 import { checkAuthentication } from './auth';
 import liveActivityRouter from './liveActivityRouter';
 import liveActivityChannelRouter from './liveActivityChannelRouter';
+import deviceSettingsRouter from './deviceSettingsRouter';
 import { ONE_DAY, ONE_HOUR } from './constants';
 
 // Barring a dramatic upheaval, I think we're safe to hardcode this.
@@ -107,6 +108,7 @@ router.put('/api/co-founders/:cofounder', checkAuthentication, checkCoFounder, a
 
 router.all('/api/push-tokens/*', liveActivityRouter.handle);
 router.all('/api/live-activity-channel', liveActivityChannelRouter.handle);
+router.all('/api/device-settings/*', deviceSettingsRouter.handle);
 
 // 404 for everything else
 router.all('*', () => {
