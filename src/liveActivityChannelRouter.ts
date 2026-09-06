@@ -17,7 +17,7 @@ router.get('/', async (request, env: Env, ctx: ExecutionContext) => {
 	}
 	const environment = environmentResult.data;
 
-	const channelId = await getOrCreateChannel(env, environment);
+	const channelId = await getOrCreateChannel(env, environment, ctx);
 
 	return new Response(JSON.stringify({ channelId }), {
 		headers: {

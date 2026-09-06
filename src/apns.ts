@@ -117,7 +117,7 @@ export async function createChannel(env: Env, environment: ApnsEnvironment): Pro
 // Reads the current channel ID for an environment, creating and storing one if none exists yet.
 // Purges the channel's cache tag on creation so a stale (or previously deleted) cached response
 // can't keep serving an old/dead channel ID after a new one is created.
-export async function getOrCreateChannel(env: Env, environment: ApnsEnvironment): Promise<string> {
+export async function getOrCreateChannel(env: Env, environment: ApnsEnvironment, ctx: ExecutionContext): Promise<string> {
 	const existingChannelId = await env.RELAY_FOR_ST_JUDE.get(makeChannelKey(environment));
 	if (existingChannelId) {
 		return existingChannelId;
@@ -136,14 +136,17 @@ export async function getOrCreateChannel(env: Env, environment: ApnsEnvironment)
 	}
 	await env.RELAY_FOR_ST_JUDE.put(makeChannelKey(environment), channelId);
 
-	try {
-		const purgeResult = await cache.purge({ tags: [liveActivityChannelCacheTag(environment)] });
-		if (!purgeResult.success) {
-			console.error(`Failed to purge Live Activity channel cache for ${environment}`, purgeResult.errors);
-		}
-	} catch (err) {
-		console.error(`Threw while purging Live Activity channel cache for ${environment}`, err);
-	}
+	ctx.waitUntil(
+		cache.purge({ tags: [liveActivityChannelCacheTag(environment)] })
+			.then((purgeResult) => {
+				if (!purgeResult.success) {
+					console.error(`Failed to purge Live Activity channel cache for ${environment}`, purgeResult.errors);
+				}
+			})
+			.catch((err) => {
+				console.error(`Threw while purging Live Activity channel cache for ${environment}`, err);
+			})
+	);
 
 	return channelId;
 }
@@ -229,18 +232,22 @@ export async function notifyScoreChange(
 
 	console.log('Sending notifications for new scores', scores);
 
-	try {
-		const purgeResult = await cache.purge({ tags: [CO_FOUNDER_SCORES_CACHE_TAG] });
-		if (!purgeResult.success) {
-			console.error('Failed to purge co-founder scores cache', purgeResult.errors);
-		}
-	} catch (err) {
-		console.error('Threw while purging co-founder scores cache', err);
-	}
+	const purgePromise = cache.purge({ tags: [CO_FOUNDER_SCORES_CACHE_TAG] })
+		.then((purgeResult) => {
+			if (!purgeResult.success) {
+				console.error('Failed to purge co-founder scores cache', purgeResult.errors);
+			}
+		})
+		.catch((err) => {
+			console.error('Threw while purging co-founder scores cache', err);
+		});
 
-	const results = await Promise.allSettled(rows.map((row) =>
-		sendApnsPush(env, row.token, row.environment, 'background', env.APNS_BUNDLE_ID, { aps: { 'content-changed': 1 } }, 5)
-	));
+	const [, results] = await Promise.all([
+		purgePromise,
+		Promise.allSettled(rows.map((row) =>
+			sendApnsPush(env, row.token, row.environment, 'background', env.APNS_BUNDLE_ID, { aps: { 'content-changed': 1 } }, 5)
+		)),
+	]);
 
 	await deleteDeadPushTokens(env, rows, results);
 
