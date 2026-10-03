@@ -1,5 +1,5 @@
 import { IRequestStrict, Router, status, StatusError } from 'itty-router';
-import { notifyScoreChange } from './apns';
+import { describeError, notifyScoreChange } from './apns';
 import { checkAuthentication } from './auth';
 import liveActivityRouter from './liveActivityRouter';
 import liveActivityChannelRouter from './liveActivityChannelRouter';
@@ -100,7 +100,7 @@ router.put('/api/co-founders/:cofounder', checkAuthentication, checkCoFounder, a
 	// notifyScoreChange also purges the co-founder-scores cache tag, since both this handler
 	// and the cron-driven scoreboard sync call it whenever a score actually changes.
 	ctx.waitUntil(notifyScoreChange(env, scores).catch((err) => {
-		console.error('Failed to send push notifications', err);
+		console.error(`Failed to send push notifications: ${describeError(err)}`);
 	}));
 
 	return status(204);

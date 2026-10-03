@@ -199,6 +199,15 @@ async function sendBroadcastPush(
 	return { ok: false, status: response.status, reason: body.reason };
 }
 
+/**
+ * Formats a thrown value as a string so its message lands in the log line itself. Workers Logs
+ * only keeps the first line of a logged Error object, which hides the underlying cause.
+ * @param err The thrown value.
+ */
+export function describeError(err: unknown): string {
+	return err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+}
+
 type PushTokenRow = { device_id: string; token_type: string; scope_id: string; token: string; environment: ApnsEnvironment };
 
 // Deletes a row's token only on 410 or reason=BadDeviceToken — a bare 400 can also mean
@@ -212,7 +221,7 @@ async function deleteDeadPushTokens(
 	for (let i = 0; i < results.length; i++) {
 		const result = results[i];
 		if (result.status === 'rejected') {
-			console.error(`APNs push threw for device ${rows[i].device_id}`, result.reason);
+			console.error(`APNs push threw for device ${rows[i].device_id}: ${describeError(result.reason)}`);
 			continue;
 		}
 		if (result.value.ok) continue;
@@ -263,29 +272,34 @@ export async function notifyScoreChange(
 
 	const environments: ApnsEnvironment[] = ['sandbox', 'production'];
 	await Promise.all(environments.map(async (environment) => {
-		const channelId = await env.RELAY_FOR_ST_JUDE.get(makeChannelKey(environment));
-		if (!channelId) return;
+		try {
+			const channelId = await env.RELAY_FOR_ST_JUDE.get(makeChannelKey(environment));
+			if (!channelId) return;
 
-		const result = await sendBroadcastPush(env, channelId, environment, {
-			aps: {
-				timestamp: Math.floor(Date.now() / 1000),
-				event: 'update',
-				'content-state': scores,
-			},
-		});
-		if (result.ok) return;
+			const result = await sendBroadcastPush(env, channelId, environment, {
+				aps: {
+					timestamp: Math.floor(Date.now() / 1000),
+					event: 'update',
+					'content-state': scores,
+				},
+			});
+			if (result.ok) return;
 
-		if (result.reason === 'ChannelNotRegistered') {
-			await env.RELAY_FOR_ST_JUDE.delete(makeChannelKey(environment));
-			try {
-				const purgeResult = await cache.purge({ tags: [liveActivityChannelCacheTag(environment)] });
-				if (!purgeResult.success) {
-					console.error(`Failed to purge Live Activity channel cache for ${environment}`, purgeResult.errors);
+			if (result.reason === 'ChannelNotRegistered') {
+				await env.RELAY_FOR_ST_JUDE.delete(makeChannelKey(environment));
+				try {
+					const purgeResult = await cache.purge({ tags: [liveActivityChannelCacheTag(environment)] });
+					if (!purgeResult.success) {
+						console.error(`Failed to purge Live Activity channel cache for ${environment}`, purgeResult.errors);
+					}
+				} catch (err) {
+					console.error(`Threw while purging Live Activity channel cache for ${environment}`, err);
 				}
-			} catch (err) {
-				console.error(`Threw while purging Live Activity channel cache for ${environment}`, err);
+				console.log(`Live Activity channel for ${environment} is gone; existing activities are orphaned until the app relaunches and fetches a new channel`);
 			}
-			console.log(`Live Activity channel for ${environment} is gone; existing activities are orphaned until the app relaunches and fetches a new channel`);
+		} catch (err) {
+			// Isolated per environment so one failing broadcast can't reject notifyScoreChange
+			console.error(`Broadcast to ${environment} threw: ${describeError(err)}`);
 		}
 	}));
 }

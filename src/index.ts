@@ -11,7 +11,7 @@
 import apiRouter from './router';
 import { error, json } from 'itty-router';
 import { fetchStJudeScoreboard } from './scoreboard';
-import { notifyScoreChange, sendLiveActivityStartsOnce } from './apns';
+import { describeError, notifyScoreChange, sendLiveActivityStartsOnce } from './apns';
 
 // Export a default object containing event handlers
 export default {
@@ -48,7 +48,7 @@ export default {
 				.then((updatedScores) => updatedScores ? notifyScoreChange(env, updatedScores) : undefined)
 				.then(() => new Date() >= new Date(env.LIVE_ACTIVITY_START_TIME) ? sendLiveActivityStartsOnce(env, ctx) : undefined)
 				.catch((err) => {
-					console.error('St Jude scoreboard poll threw an error', err);
+					console.error(`St Jude scoreboard poll threw an error: ${describeError(err)}`);
 				})
 		);
 	}
