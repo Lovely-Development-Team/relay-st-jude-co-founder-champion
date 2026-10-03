@@ -1,6 +1,6 @@
 import { importPKCS8, SignJWT } from 'jose';
 import { StatusError } from 'itty-router';
-import { cache } from 'cloudflare:workers';
+import { purgeCacheTag } from './purge';
 import { CO_FOUNDER_SCORES_CACHE_TAG, getScores } from './router';
 import { ONE_HOUR } from './constants';
 
@@ -146,17 +146,7 @@ export async function getOrCreateChannel(env: Env, environment: ApnsEnvironment,
 	}
 	await env.RELAY_FOR_ST_JUDE.put(makeChannelKey(environment), channelId);
 
-	ctx.waitUntil(
-		cache.purge({ tags: [liveActivityChannelCacheTag(environment)] })
-			.then((purgeResult) => {
-				if (!purgeResult.success) {
-					console.error(`Failed to purge Live Activity channel cache for ${environment}`, purgeResult.errors);
-				}
-			})
-			.catch((err) => {
-				console.error(`Threw while purging Live Activity channel cache for ${environment}`, err);
-			})
-	);
+	ctx.waitUntil(purgeCacheTag(liveActivityChannelCacheTag(environment), `Live Activity channel cache for ${environment}`));
 
 	return channelId;
 }
@@ -251,15 +241,7 @@ export async function notifyScoreChange(
 
 	console.log('Sending notifications for new scores', scores);
 
-	const purgePromise = cache.purge({ tags: [CO_FOUNDER_SCORES_CACHE_TAG] })
-		.then((purgeResult) => {
-			if (!purgeResult.success) {
-				console.error('Failed to purge co-founder scores cache', purgeResult.errors);
-			}
-		})
-		.catch((err) => {
-			console.error('Threw while purging co-founder scores cache', err);
-		});
+	const purgePromise = purgeCacheTag(CO_FOUNDER_SCORES_CACHE_TAG, 'co-founder scores cache');
 
 	const [, results] = await Promise.all([
 		purgePromise,
@@ -287,14 +269,7 @@ export async function notifyScoreChange(
 
 			if (result.reason === 'ChannelNotRegistered') {
 				await env.RELAY_FOR_ST_JUDE.delete(makeChannelKey(environment));
-				try {
-					const purgeResult = await cache.purge({ tags: [liveActivityChannelCacheTag(environment)] });
-					if (!purgeResult.success) {
-						console.error(`Failed to purge Live Activity channel cache for ${environment}`, purgeResult.errors);
-					}
-				} catch (err) {
-					console.error(`Threw while purging Live Activity channel cache for ${environment}`, err);
-				}
+				await purgeCacheTag(liveActivityChannelCacheTag(environment), `Live Activity channel cache for ${environment}`);
 				console.log(`Live Activity channel for ${environment} is gone; existing activities are orphaned until the app relaunches and fetches a new channel`);
 			}
 		} catch (err) {
@@ -333,14 +308,7 @@ async function sendBroadcastEnd(env: Env, environment: ApnsEnvironment, channelI
 	}
 
 	await env.RELAY_FOR_ST_JUDE.delete(makeChannelKey(environment));
-	try {
-		const purgeResult = await cache.purge({ tags: [liveActivityChannelCacheTag(environment)] });
-		if (!purgeResult.success) {
-			console.error(`Failed to purge Live Activity channel cache for ${environment}`, purgeResult.errors);
-		}
-	} catch (err) {
-		console.error(`Threw while purging Live Activity channel cache for ${environment}`, err);
-	}
+	await purgeCacheTag(liveActivityChannelCacheTag(environment), `Live Activity channel cache for ${environment}`);
 	console.log(`Live Activity channel for ${environment} is gone; existing activities are orphaned until the app relaunches and fetches a new channel`);
 	throw new ChannelInvalidatedError(environment);
 }

@@ -1,5 +1,5 @@
 import { IRequestStrict, Router, status, StatusError } from 'itty-router';
-import { cache } from 'cloudflare:workers';
+import { purgeCacheTag } from './purge';
 import { z } from 'zod';
 import { ONE_DAY, ONE_HOUR } from './constants';
 
@@ -31,16 +31,7 @@ router.put('/:deviceId', async (request, env: Env, ctx: ExecutionContext) => {
 		 ON CONFLICT(device_id) DO UPDATE SET auto_start_live_activity = ?2, updated_at = ?3`
 	).bind(deviceId, autoStartLiveActivity ? 1 : 0, now).run();
 
-	ctx.waitUntil((async () => {
-		try {
-			const purgeResult = await cache.purge({ tags: [deviceSettingsCacheTag(deviceId)] });
-			if (!purgeResult.success) {
-				console.error(`Failed to purge device settings cache for ${deviceId}`, purgeResult.errors);
-			}
-		} catch (err) {
-			console.error(`Threw while purging device settings cache for ${deviceId}`, err);
-		}
-	})());
+	ctx.waitUntil(purgeCacheTag(deviceSettingsCacheTag(deviceId), `device settings cache for ${deviceId}`));
 
 	return status(204);
 });
